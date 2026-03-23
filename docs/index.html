@@ -168,6 +168,20 @@
         .status-same { color: #86868b; }
         .status-error { color: #ff3b30; font-weight: 500; }
         .status-collision { color: #af52de; font-weight: 500; }
+        .error-reason {
+            grid-column: 1 / -1;
+            padding: 4px 20px 8px 48px;
+            font-size: 12px;
+            color: #ff3b30;
+            line-height: 1.4;
+        }
+        .warn-reason {
+            grid-column: 1 / -1;
+            padding: 4px 20px 8px 48px;
+            font-size: 12px;
+            color: #ff9500;
+            line-height: 1.4;
+        }
 
         button {
             padding: 12px 24px;
@@ -659,15 +673,19 @@
         function friendlyError(e) {
             const msg = e.message || String(e);
             if (msg.includes('not found') || msg.includes('NotFoundError'))
-                return '파일을 찾을 수 없습니다 (외부에서 삭제/이동됨)';
+                return '파일을 찾을 수 없습니다 (삭제되었거나 이동됨)';
             if (msg.includes('not allowed') || msg.includes('NotAllowedError'))
-                return '쓰기 권한이 거부되었습니다';
+                return '쓰기 권한이 거부되었습니다. 브라우저에서 파일 접근을 허용해주세요.';
             if (msg.includes('no modification allowed') || msg.includes('InvalidModificationError'))
-                return '파일이 사용 중이거나 수정할 수 없습니다';
+                return '파일이 다른 프로그램에서 사용 중입니다. 해당 파일을 닫고 재시도해주세요.';
             if (msg.includes('quota') || msg.includes('QuotaExceededError'))
-                return '디스크 공간이 부족합니다';
+                return '디스크 공간이 부족합니다. 여유 공간을 확보해주세요.';
             if (msg.includes('abort') || msg.includes('AbortError'))
                 return '작업이 중단되었습니다';
+            if (msg.includes('lock') || msg.includes('NoModificationAllowedError'))
+                return '파일이 잠겨 있습니다. 사용 중인 프로그램을 닫고 재시도해주세요.';
+            if (msg.includes('type mismatch') || msg.includes('TypeMismatchError'))
+                return '파일과 같은 이름의 폴더가 이미 존재합니다.';
             return msg;
         }
 
@@ -1039,6 +1057,13 @@
                     actionHtml = '<button class="btn-primary btn-item" onclick="convertOne(' + idx + ')">' + label + '</button>';
                 }
 
+                let reasonHtml = '';
+                if (f.error) {
+                    reasonHtml = '<div class="error-reason">↳ ' + escapeHtml(f.error) + '</div>';
+                } else if (f.done && f.warning) {
+                    reasonHtml = '<div class="warn-reason">↳ ' + escapeHtml(f.warning) + '</div>';
+                }
+
                 return '<div class="file-item">' +
                     '<div class="name">' +
                         '<span class="path-icon" onclick="event.stopPropagation(); showPathModal(' + idx + ')" title="파일 위치 보기">📂</span>' +
@@ -1049,6 +1074,7 @@
                     '</div>' +
                     '<div class="' + statusClass + '"' + (statusTitle ? ' title="' + statusTitle + '" style="cursor:help"' : '') + '>' + statusText + '</div>' +
                     '<div>' + actionHtml + '</div>' +
+                    reasonHtml +
                     '</div>';
             }).join('');
 
