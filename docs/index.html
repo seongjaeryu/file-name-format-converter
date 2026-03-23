@@ -456,10 +456,17 @@
             fileInput.value = '';
         });
 
+        // 숨김 파일 필터 (macOS 시스템 파일 등)
+        function isHiddenFile(name) {
+            return name.startsWith('.');
+        }
+
         // === Direct 모드: 폴더 재귀 스캔 ===
         async function scanDirectory(dirH, pathPrefix) {
             let added = 0;
             for await (const child of dirH.values()) {
+                if (isHiddenFile(child.name)) continue;
+
                 if (child.kind === 'file') {
                     const name = child.name;
                     const source = pathPrefix;
@@ -475,7 +482,6 @@
                     });
                     added++;
                 } else if (child.kind === 'directory') {
-                    // 하위 폴더 재귀 스캔
                     const subPath = pathPrefix ? pathPrefix + '/' + child.name : child.name;
                     added += await scanDirectory(child, subPath);
                 }
@@ -535,25 +541,71 @@
             renderFiles();
         }
 
+        // === Direct 모드: 쓰기 권한 요청 ===
+        async function ensureWritePermission(handle) {
+            if (!handle.requestPermission) return true;
+            const perm = await handle.requestPermission({ mode: 'readwrite' });
+            return perm === 'granted';
+        }
+
+        // === Direct 모드: 충돌 방지 파일명 생성 ===
+        async function getSafeFilename(dirH, name) {
+            // 같은 이름 파일이 이미 존재하는지 확인
+            try {
+                await dirH.getFileHandle(name);
+                // 존재하면 숫자 붙이기
+                const [stem, ext] = splitExt(name);
+                let counter = 1;
+                while (true) {
+                    const candidate = stem + ' (' + counter + ')' + ext;
+                    try {
+                        await dirH.getFileHandle(candidate);
+                        counter++;
+                    } catch {
+                        return candidate;
+                    }
+                }
+            } catch {
+                // 존재하지 않으면 그대로 사용
+                return name;
+            }
+        }
+
+        // === Direct 모드: 단일 파일 변환 실행 ===
+        async function renameEntry(entry) {
+            const targetHandle = entry.dirHandle || entry.fileHandle;
+            if (!await ensureWritePermission(targetHandle)) {
+                throw new Error('쓰기 권한이 거부되었습니다');
+            }
+
+            if (entry.dirHandle) {
+                // 폴더 핸들이 있으면: 충돌 방지 → 스트림 복사 → 삭제
+                const safeName = await getSafeFilename(entry.dirHandle, entry.converted);
+                entry.converted = safeName;
+
+                const file = await entry.fileHandle.getFile();
+                const newHandle = await entry.dirHandle.getFileHandle(safeName, { create: true });
+                const writable = await newHandle.createWritable();
+                // 스트림으로 복사 (대용량 파일 메모리 절약)
+                await file.stream().pipeTo(writable);
+                await entry.dirHandle.removeEntry(entry.original);
+            } else {
+                // 개별 파일: move() 사용, 미지원 시 에러 안내
+                if (entry.fileHandle.move) {
+                    await entry.fileHandle.move(entry.converted);
+                } else {
+                    throw new Error('개별 파일 변환은 Chrome 110+ 필요. 폴더째로 드롭해주세요.');
+                }
+            }
+        }
+
         // === Direct 모드: 개별 변환 ===
         async function convertOneDirect(idx) {
             const entry = fileEntries[idx];
             if (!entry || entry.done || entry.original === entry.converted) return;
 
             try {
-                if (entry.dirHandle) {
-                    // 폴더 핸들이 있으면: 복사 + 삭제
-                    const file = await entry.fileHandle.getFile();
-                    const data = await file.arrayBuffer();
-                    const newHandle = await entry.dirHandle.getFileHandle(entry.converted, { create: true });
-                    const writable = await newHandle.createWritable();
-                    await writable.write(data);
-                    await writable.close();
-                    await entry.dirHandle.removeEntry(entry.original);
-                } else {
-                    // 개별 파일: move() 사용 (Chrome 110+)
-                    await entry.fileHandle.move(entry.converted);
-                }
+                await renameEntry(entry);
                 entry.done = true;
             } catch (e) {
                 entry.error = e.message;
@@ -574,19 +626,8 @@
 
             for (let i = 0; i < toConvert.length; i++) {
                 const entry = toConvert[i];
-                const idx = fileEntries.indexOf(entry);
                 try {
-                    if (entry.dirHandle) {
-                        const file = await entry.fileHandle.getFile();
-                        const data = await file.arrayBuffer();
-                        const newHandle = await entry.dirHandle.getFileHandle(entry.converted, { create: true });
-                        const writable = await newHandle.createWritable();
-                        await writable.write(data);
-                        await writable.close();
-                        await entry.dirHandle.removeEntry(entry.original);
-                    } else {
-                        await entry.fileHandle.move(entry.converted);
-                    }
+                    await renameEntry(entry);
                     entry.done = true;
                     success++;
                 } catch (e) {
@@ -777,9 +818,12 @@
         }
 
         function escapeHtml(str) {
-            const div = document.createElement('div');
-            div.textContent = str;
-            return div.innerHTML;
+            return str
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
     </script>
 </body>
