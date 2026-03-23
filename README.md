@@ -52,51 +52,51 @@
 <details>
 <summary>왜 파일명이 깨질까? (기술 배경)</summary>
 
-macOS는 유니코드 **NFD**(자모 분리형)를, Windows는 **NFC**(완성형)를 사용합니다.
-
-- macOS (NFD): `ㅎ + ㅏ + ㄴ + ㄱ + ㅡ + ㄹ.txt`
-- Windows (NFC): `한글.txt`
-
-같은 글자를 저장하는 방식이 다르기 때문에, Mac에서 만든 파일을 Windows에서 열면 이름이 깨져 보입니다. 이 도구는 Mac 방식(NFD)을 Windows 방식(NFC)으로 변환합니다.
+> macOS는 유니코드 **NFD**(자모 분리형)를, Windows는 **NFC**(완성형)를 사용합니다.
+>
+> - macOS (NFD): `ㅎ + ㅏ + ㄴ + ㄱ + ㅡ + ㄹ.txt`
+> - Windows (NFC): `한글.txt`
+>
+> 같은 글자를 저장하는 방식이 다르기 때문에, Mac에서 만든 파일을 Windows에서 열면 이름이 깨져 보입니다. 이 도구는 Mac 방식(NFD)을 Windows 방식(NFC)으로 변환합니다.
 
 </details>
 
 <details>
 <summary>변환 방식 상세 (개발자용)</summary>
 
-### APFS와 NTFS의 유니코드 처리 차이
-
-|   | APFS (macOS) | NTFS (Windows) |
-| --- | --- | --- |
-| NFD/NFC 구분 | 같은 파일명으로 취급 | 다른 파일명으로 취급 |
-| 직접 rename 가능 여부 | 불가 (동일 이름으로 인식) | 가능 |
-
-APFS에서 `한글.txt`(NFD)를 `한글.txt`(NFC)로 직접 rename하면 "같은 이름"으로 인식되어 실패합니다.
-
-### 해결: 임시 이름 경유 move 2회
-
-```text
-한글.txt(NFD) → 한글.txt~a7~nfc → 한글.txt(NFC)
-```
-
-완전히 다른 이름(임시)을 경유하면 APFS도 다른 파일로 인식합니다.
-File System Access API의 `FileSystemFileHandle.move()`를 사용하며 (Chrome 110+), 파일 내용 복사 없이 이름만 변경하므로 대용량 파일도 즉시 처리됩니다. 실패 시 `*~nfc`로 검색하면 중간 상태 파일을 찾을 수 있습니다.
-
-Windows(NTFS)에서도 동일한 로직으로 동작합니다.
-
-### 브라우저의 파일명 정규화 주의
-
-개별 파일을 드래그앤드롭하면 브라우저가 `FileSystemFileHandle.name`을 NFC로 정규화하여 전달합니다. 이 경우 원본(NFD)과 변환 결과(NFC)가 동일하게 보여 변환 필요 여부를 감지할 수 없습니다.
-
-**폴더째로 드롭하면** 디렉토리 핸들의 `values()`를 순회하면서 파일시스템의 실제 NFD 이름을 읽으므로 정상 감지됩니다.
-
-### 변환 항목
-
-- NFD → NFC 유니코드 정규화 (핵심)
-- Windows 금지 문자 대체 (`< > : " / \ | ? *` → `_`)
-- Windows 예약 파일명 처리 (CON, PRN, AUX 등)
-- 파일명 끝 마침표/공백 제거
-- 파일명 길이 제한 (255바이트)
+> **APFS와 NTFS의 유니코드 처리 차이**
+>
+> |   | APFS (macOS) | NTFS (Windows) |
+> | --- | --- | --- |
+> | NFD/NFC 구분 | 같은 파일명으로 취급 | 다른 파일명으로 취급 |
+> | 직접 rename 가능 여부 | 불가 (동일 이름으로 인식) | 가능 |
+>
+> APFS에서 `한글.txt`(NFD)를 `한글.txt`(NFC)로 직접 rename하면 "같은 이름"으로 인식되어 실패합니다.
+>
+> **해결: 임시 이름 경유 move 2회**
+>
+> ```text
+> 한글.txt(NFD) → 한글.txt~a7~nfc → 한글.txt(NFC)
+> ```
+>
+> 완전히 다른 이름(임시)을 경유하면 APFS도 다른 파일로 인식합니다.
+> File System Access API의 `FileSystemFileHandle.move()`를 사용하며 (Chrome 110+), 파일 내용 복사 없이 이름만 변경하므로 대용량 파일도 즉시 처리됩니다. 실패 시 `*~nfc`로 검색하면 중간 상태 파일을 찾을 수 있습니다.
+>
+> Windows(NTFS)에서도 동일한 로직으로 동작합니다.
+>
+> **브라우저의 파일명 정규화 주의**
+>
+> 개별 파일을 드래그앤드롭하면 브라우저가 `FileSystemFileHandle.name`을 NFC로 정규화하여 전달합니다. 이 경우 원본(NFD)과 변환 결과(NFC)가 동일하게 보여 변환 필요 여부를 감지할 수 없습니다.
+>
+> **폴더째로 드롭하면** 디렉토리 핸들의 `values()`를 순회하면서 파일시스템의 실제 NFD 이름을 읽으므로 정상 감지됩니다.
+>
+> **변환 항목**
+>
+> - NFD → NFC 유니코드 정규화 (핵심)
+> - Windows 금지 문자 대체 (`< > : " / \ | ? *` → `_`)
+> - Windows 예약 파일명 처리 (CON, PRN, AUX 등)
+> - 파일명 끝 마침표/공백 제거
+> - 파일명 길이 제한 (255바이트)
 
 </details>
 
