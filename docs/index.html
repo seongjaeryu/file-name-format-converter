@@ -747,7 +747,7 @@
                     throw new Error('파일 이름 변경 미지원 브라우저입니다. Chrome 110+ 필요.');
                 }
 
-                const suffix = '_converting-' + Math.random().toString(36).slice(2, 4);
+                const suffix = '~' + Math.random().toString(36).slice(2, 4);
                 const tempName = entry.original + suffix;
 
                 // 1단계: 원본 → 임시 이름으로 rename
@@ -761,7 +761,7 @@
                 try {
                     await entry.fileHandle.move(entry.dirHandle, entry.converted);
                 } catch (e) {
-                    entry.warning = '파일이 임시 이름(' + tempName + ')으로 남아있습니다.';
+                    entry.warning = '파일이 임시 이름(' + tempName + ')으로 남아 있습니다.';
                     throw e;
                 }
             } else {
