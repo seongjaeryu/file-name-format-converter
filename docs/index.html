@@ -85,7 +85,7 @@
         }
         .file-list-header {
             display: grid;
-            grid-template-columns: 1fr 1fr 120px;
+            grid-template-columns: 1fr 1fr 100px 80px;
             padding: 12px 20px;
             background: #f5f5f7;
             font-weight: 600;
@@ -94,11 +94,21 @@
         }
         .file-item {
             display: grid;
-            grid-template-columns: 1fr 1fr 120px;
+            grid-template-columns: 1fr 1fr 100px 80px;
             padding: 14px 20px;
             border-top: 1px solid #f0f0f0;
             font-size: 14px;
             align-items: center;
+        }
+        .btn-item {
+            padding: 6px 12px;
+            font-size: 12px;
+            border-radius: 6px;
+        }
+        .btn-item:disabled {
+            background: #e8e8ed;
+            color: #86868b;
+            cursor: default;
         }
         .file-item .name {
             overflow: hidden;
@@ -165,10 +175,11 @@
             body { padding: 20px 12px; }
             h1 { font-size: 22px; }
             .file-list-header, .file-item {
-                grid-template-columns: 1fr 1fr 80px;
+                grid-template-columns: 1fr 1fr 70px 60px;
                 padding: 10px 12px;
                 font-size: 12px;
             }
+            .btn-item { padding: 4px 8px; font-size: 11px; }
             .drop-zone { padding: 32px 16px; }
         }
     </style>
@@ -218,6 +229,7 @@
                 <div>원래 파일명</div>
                 <div>변환 후 파일명</div>
                 <div>상태</div>
+                <div>액션</div>
             </div>
             <div id="fileItems"></div>
         </div>
@@ -494,6 +506,38 @@
         }
 
         // === 공통 ===
+        async function convertOne(idx) {
+            const entry = fileEntries[idx];
+            if (!entry || entry.done || entry.original === entry.converted) return;
+
+            if (currentMode === 'direct') {
+                try {
+                    const file = await entry.handle.getFile();
+                    const data = await file.arrayBuffer();
+                    const newHandle = await dirHandle.getFileHandle(entry.converted, { create: true });
+                    const writable = await newHandle.createWritable();
+                    await writable.write(data);
+                    await writable.close();
+                    await dirHandle.removeEntry(entry.original);
+                    entry.done = true;
+                } catch (e) {
+                    entry.error = e.message;
+                }
+            } else {
+                const url = URL.createObjectURL(entry.file);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = entry.converted;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                entry.done = true;
+            }
+
+            renderFiles();
+        }
+
         function convertAll() {
             if (currentMode === 'direct') {
                 convertDirect();
@@ -523,7 +567,7 @@
             fileList.style.display = 'block';
             actions.style.display = 'flex';
 
-            container.innerHTML = fileEntries.map(f => {
+            container.innerHTML = fileEntries.map((f, idx) => {
                 const changed = f.original !== f.converted;
                 const statusClass = f.done ? 'status-done'
                     : f.error ? 'status-error'
@@ -532,10 +576,20 @@
                     : f.error ? '오류'
                     : changed ? '변환 필요' : '변환 불필요';
 
+                let actionHtml;
+                if (f.done || !changed) {
+                    actionHtml = '<button class="btn-secondary btn-item" disabled>' +
+                        (f.done ? '완료' : '-') + '</button>';
+                } else {
+                    actionHtml = '<button class="btn-primary btn-item" onclick="convertOne(' + idx + ')">' +
+                        (currentMode === 'direct' ? '변환' : '다운로드') + '</button>';
+                }
+
                 return '<div class="file-item">' +
                     '<div class="name" title="' + escapeHtml(f.original) + '">' + escapeHtml(f.original) + '</div>' +
                     '<div class="name ' + (changed ? 'converted' : 'no-change') + '" title="' + escapeHtml(f.converted) + '">' + escapeHtml(f.converted) + '</div>' +
                     '<div class="' + statusClass + '">' + statusText + '</div>' +
+                    '<div>' + actionHtml + '</div>' +
                     '</div>';
             }).join('');
 
