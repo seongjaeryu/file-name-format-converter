@@ -6,7 +6,6 @@
 import os
 import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import parse_qs, unquote
 import webbrowser
 import threading
 
@@ -340,9 +339,13 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(HTML_PAGE.encode("utf-8"))
 
     def do_POST(self):
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length).decode("utf-8")
-        data = json.loads(body)
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length).decode("utf-8")
+            data = json.loads(body)
+        except (ValueError, json.JSONDecodeError):
+            self.send_json_response({"error": "잘못된 요청입니다"})
+            return
 
         if self.path == "/api/preview":
             result = self.handle_preview(data)
@@ -353,6 +356,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         else:
             result = {"error": "Unknown endpoint"}
 
+        self.send_json_response(result)
+
+    def send_json_response(self, result):
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.end_headers()

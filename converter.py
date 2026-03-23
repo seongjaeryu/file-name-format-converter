@@ -41,8 +41,14 @@ def fix_reserved_name(name: str) -> str:
 
 def strip_trailing_dots_spaces(name: str) -> str:
     """Windows에서 허용하지 않는 파일명 끝의 마침표/공백 제거"""
-    stem, ext = os.path.splitext(name)
-    stem = stem.rstrip(". ")
+    # 확장자를 보존하면서 stem 부분의 끝 마침표/공백 제거
+    # "test.." → splitext → ("test.", ".") 문제를 방지하기 위해
+    # 마지막 유효 확장자만 분리
+    stripped = name.rstrip(". ")
+    if not stripped:
+        return "_"
+    # 원본에서 유효한 확장자 추출 (stripped 기준)
+    stem, ext = os.path.splitext(stripped)
     if not stem:
         stem = "_"
     return f"{stem}{ext}"
