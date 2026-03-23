@@ -632,29 +632,6 @@
             return perm === 'granted';
         }
 
-        // === Direct 모드: 충돌 방지 파일명 생성 ===
-        async function getSafeFilename(dirH, name) {
-            // 같은 이름 파일이 이미 존재하는지 확인
-            try {
-                await dirH.getFileHandle(name);
-                // 존재하면 숫자 붙이기
-                const [stem, ext] = splitExt(name);
-                let counter = 1;
-                while (true) {
-                    const candidate = stem + ' (' + counter + ')' + ext;
-                    try {
-                        await dirH.getFileHandle(candidate);
-                        counter++;
-                    } catch {
-                        return candidate;
-                    }
-                }
-            } catch {
-                // 존재하지 않으면 그대로 사용
-                return name;
-            }
-        }
-
         // === Direct 모드: 에러 메시지 한국어 변환 ===
         function friendlyError(e) {
             const msg = e.message || String(e);
@@ -671,7 +648,20 @@
             return msg;
         }
 
+        // === Direct 모드: 파일 내용 복사 유틸 ===
+        async function copyFileContent(sourceFile, destWritable) {
+            if (sourceFile.stream && typeof sourceFile.stream === 'function') {
+                await sourceFile.stream().pipeTo(destWritable);
+            } else {
+                const data = await sourceFile.arrayBuffer();
+                await destWritable.write(data);
+                await destWritable.close();
+            }
+        }
+
         // === Direct 모드: 단일 파일 변환 실행 ===
+        // macOS APFS는 NFD/NFC를 같은 파일명으로 취급하므로
+        // 임시 파일 경유: 원본 → 임시 복사 → 원본 삭제 → 최종 이름으로 복사 → 임시 삭제
         async function renameEntry(entry) {
             const targetHandle = entry.dirHandle || entry.fileHandle;
             if (!await ensureWritePermission(targetHandle)) {
@@ -679,10 +669,6 @@
             }
 
             if (entry.dirHandle) {
-                // 폴더 핸들이 있으면: 충돌 방지 → 복사 → 삭제
-                const safeName = await getSafeFilename(entry.dirHandle, entry.converted);
-                entry.converted = safeName;
-
                 let file;
                 try {
                     file = await entry.fileHandle.getFile();
@@ -690,31 +676,45 @@
                     throw new Error('파일을 찾을 수 없습니다 (외부에서 삭제/이동됨)');
                 }
 
-                const newHandle = await entry.dirHandle.getFileHandle(safeName, { create: true });
-                const writable = await newHandle.createWritable();
+                const tempName = '.__converting_' + Date.now() + '_' + Math.random().toString(36).slice(2);
 
+                // 1단계: 원본 → 임시 파일로 복사
                 try {
-                    // 스트림 복사 시도 (대용량 파일 메모리 절약)
-                    if (file.stream && typeof file.stream === 'function') {
-                        await file.stream().pipeTo(writable);
-                    } else {
-                        // stream 미지원 폴백: ArrayBuffer
-                        const data = await file.arrayBuffer();
-                        await writable.write(data);
-                        await writable.close();
-                    }
+                    const tempHandle = await entry.dirHandle.getFileHandle(tempName, { create: true });
+                    const tempWritable = await tempHandle.createWritable();
+                    await copyFileContent(file, tempWritable);
                 } catch (e) {
-                    // 복사 실패 시 불완전한 새 파일 정리 시도
-                    try { await entry.dirHandle.removeEntry(safeName); } catch {}
+                    try { await entry.dirHandle.removeEntry(tempName); } catch {}
                     throw e;
                 }
 
-                // 원본 삭제
+                // 2단계: 원본 삭제
                 try {
                     await entry.dirHandle.removeEntry(entry.original);
                 } catch (e) {
-                    // 삭제 실패 → 새 파일은 이미 존재, 원본도 남아있음
-                    entry.warning = '변환 완료되었으나 원본 파일 삭제 실패 (수동 삭제 필요)';
+                    // 원본 삭제 실패 → 임시 파일 정리
+                    try { await entry.dirHandle.removeEntry(tempName); } catch {}
+                    throw new Error('원본 파일 삭제 실패: ' + e.message);
+                }
+
+                // 3단계: 임시 파일 → 최종 NFC 이름으로 복사
+                try {
+                    const tempHandle = await entry.dirHandle.getFileHandle(tempName);
+                    const tempFile = await tempHandle.getFile();
+                    const finalHandle = await entry.dirHandle.getFileHandle(entry.converted, { create: true });
+                    const finalWritable = await finalHandle.createWritable();
+                    await copyFileContent(tempFile, finalWritable);
+                } catch (e) {
+                    // 최종 복사 실패 → 임시 파일은 남겨둠 (데이터 보존)
+                    entry.warning = '변환 중 오류. 임시 파일(' + tempName + ')에 데이터가 보존되어 있습니다.';
+                    throw e;
+                }
+
+                // 4단계: 임시 파일 삭제
+                try {
+                    await entry.dirHandle.removeEntry(tempName);
+                } catch (e) {
+                    entry.warning = '변환 완료. 임시 파일(' + tempName + ') 수동 삭제 필요.';
                 }
             } else {
                 // 개별 파일: move() 사용, 미지원 시 에러 안내
