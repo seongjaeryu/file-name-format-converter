@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>파일명 포맷 컨버터 (Mac → Windows)</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #f5f5f7;
+            color: #1d1d1f;
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { font-size: 28px; text-align: center; margin-bottom: 8px; }
+        .subtitle {
+            text-align: center;
+            color: #86868b;
+            margin-bottom: 32px;
+            font-size: 15px;
+        }
+        .info-box {
+            background: #e8f4fd;
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin-bottom: 24px;
+            font-size: 13px;
+            color: #1a6db0;
+            line-height: 1.6;
+        }
+        .drop-zone {
+            background: white;
+            border: 2px dashed #d2d2d7;
+            border-radius: 16px;
+            padding: 48px 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 24px;
+        }
+        .drop-zone:hover, .drop-zone.drag-over {
+            border-color: #0071e3;
+            background: #f0f7ff;
+        }
+        .drop-zone p { color: #86868b; font-size: 16px; line-height: 1.8; }
+        .drop-zone .icon { font-size: 48px; margin-bottom: 12px; display: block; }
+        .file-list {
+            background: white;
+            border-radius: 16px;
+            overflow: hidden;
+            margin-bottom: 24px;
+        }
+        .file-list-header {
+            display: grid;
+            grid-template-columns: 1fr 1fr 120px;
+            padding: 12px 20px;
+            background: #f5f5f7;
+            font-weight: 600;
+            font-size: 13px;
+            color: #86868b;
+        }
+        .file-item {
+            display: grid;
+            grid-template-columns: 1fr 1fr 120px;
+            padding: 14px 20px;
+            border-top: 1px solid #f0f0f0;
+            font-size: 14px;
+            align-items: center;
+        }
+        .file-item .name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .converted { color: #0071e3; }
+        .no-change { color: #86868b; }
+        .status-done { color: #34c759; font-weight: 500; }
+        .status-needed { color: #ff9500; font-weight: 500; }
+        .status-same { color: #86868b; }
+        .actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .file-count { color: #86868b; font-size: 14px; }
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #86868b;
+        }
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-primary { background: #0071e3; color: white; }
+        .btn-primary:hover { background: #0077ed; }
+        .btn-primary:disabled { background: #d2d2d7; cursor: not-allowed; }
+        .btn-secondary { background: #e8e8ed; color: #1d1d1f; }
+        .btn-secondary:hover { background: #d2d2d7; }
+        .progress-bar {
+            display: none;
+            background: #e8e8ed;
+            border-radius: 8px;
+            height: 8px;
+            margin-bottom: 24px;
+            overflow: hidden;
+        }
+        .progress-bar .fill {
+            background: #0071e3;
+            height: 100%;
+            width: 0%;
+            transition: width 0.3s;
+            border-radius: 8px;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            color: #86868b;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        .footer a { color: #0071e3; text-decoration: none; }
+        .footer a:hover { text-decoration: underline; }
+
+        @media (max-width: 600px) {
+            body { padding: 20px 12px; }
+            h1 { font-size: 22px; }
+            .file-list-header, .file-item {
+                grid-template-columns: 1fr 1fr 80px;
+                padding: 10px 12px;
+                font-size: 12px;
+            }
+            .drop-zone { padding: 32px 16px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>파일명 포맷 컨버터</h1>
+        <p class="subtitle">macOS 파일명(NFD)을 Windows 호환 포맷(NFC)으로 변환합니다</p>
+
+        <div class="info-box">
+            <strong>사용 방법:</strong> 파일을 아래 영역에 드래그 & 드롭하면 파일명이 변환되어 자동으로 다운로드됩니다.<br>
+            모든 처리는 브라우저에서 이루어지며, 파일이 서버로 전송되지 않습니다.
+        </div>
+
+        <div class="drop-zone" id="dropZone">
+            <p>
+                <span class="icon">📁</span>
+                파일을 여기에 드래그 & 드롭 하세요<br>
+                또는 클릭하여 파일 선택
+            </p>
+        </div>
+        <input type="file" id="fileInput" multiple hidden>
+
+        <div class="progress-bar" id="progressBar">
+            <div class="fill" id="progressFill"></div>
+        </div>
+
+        <div class="file-list" id="fileList" style="display: none;">
+            <div class="file-list-header">
+                <div>원래 파일명</div>
+                <div>변환 후 파일명</div>
+                <div>상태</div>
+            </div>
+            <div id="fileItems"></div>
+        </div>
+
+        <div class="actions" id="actions" style="display: none;">
+            <span class="file-count" id="fileCount"></span>
+            <div style="display: flex; gap: 8px;">
+                <button class="btn-secondary" onclick="clearAll()">목록 초기화</button>
+                <button class="btn-primary" id="convertBtn" onclick="convertAll()">
+                    변환 & 다운로드
+                </button>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>macOS는 유니코드 NFD(분해형), Windows는 NFC(조합형)를 사용합니다.</p>
+            <p>이 차이로 인해 한글 파일명이 깨져 보이는 문제를 해결합니다.</p>
+            <p style="margin-top: 12px;">
+                <a href="https://github.com/seongjaeryu/file-name-format-converter" target="_blank">GitHub</a>
+                &nbsp;|&nbsp; 로컬 앱 버전도 사용 가능합니다
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // Windows 금지 문자
+        const FORBIDDEN_RE = /[<>:"\/\\|?*]/g;
+        const RESERVED_NAMES = new Set([
+            'CON','PRN','AUX','NUL',
+            'COM1','COM2','COM3','COM4','COM5','COM6','COM7','COM8','COM9',
+            'LPT1','LPT2','LPT3','LPT4','LPT5','LPT6','LPT7','LPT8','LPT9',
+        ]);
+
+        let fileEntries = []; // { file: File, original: string, converted: string }
+
+        // 드래그앤드롭 설정
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', e => {
+            e.preventDefault();
+            dropZone.classList.add('drag-over');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('drag-over');
+        });
+
+        dropZone.addEventListener('drop', e => {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+            addFiles(e.dataTransfer.files);
+        });
+
+        fileInput.addEventListener('change', e => {
+            addFiles(e.target.files);
+            fileInput.value = '';
+        });
+
+        function splitExt(name) {
+            const dot = name.lastIndexOf('.');
+            if (dot <= 0) return [name, ''];
+            return [name.substring(0, dot), name.substring(dot)];
+        }
+
+        function convertFilename(name) {
+            // 1. NFD → NFC
+            let result = name.normalize('NFC');
+
+            // 2. Windows 금지 문자 대체
+            result = result.replace(FORBIDDEN_RE, '_');
+
+            // 3. Windows 예약 파일명
+            const [stem, ext] = splitExt(result);
+            if (RESERVED_NAMES.has(stem.toUpperCase())) {
+                result = '_' + stem + ext;
+            }
+
+            // 4. 끝 마침표/공백 제거
+            let stripped = result.replace(/[\s.]+$/, '');
+            if (!stripped) stripped = '_';
+            const [stem2, ext2] = splitExt(stripped);
+            result = (stem2 || '_') + ext2;
+
+            return result;
+        }
+
+        function addFiles(fileList) {
+            for (const file of fileList) {
+                // 중복 체크
+                if (fileEntries.some(e => e.original === file.name && e.file.size === file.size)) {
+                    continue;
+                }
+                const converted = convertFilename(file.name);
+                fileEntries.push({ file, original: file.name, converted, done: false });
+            }
+            renderFiles();
+        }
+
+        function renderFiles() {
+            const container = document.getElementById('fileItems');
+            const fileList = document.getElementById('fileList');
+            const actions = document.getElementById('actions');
+            const countEl = document.getElementById('fileCount');
+
+            if (fileEntries.length === 0) {
+                fileList.style.display = 'none';
+                actions.style.display = 'none';
+                return;
+            }
+
+            fileList.style.display = 'block';
+            actions.style.display = 'flex';
+
+            container.innerHTML = fileEntries.map(f => {
+                const changed = f.original !== f.converted;
+                const statusClass = f.done ? 'status-done' : changed ? 'status-needed' : 'status-same';
+                const statusText = f.done ? '완료 ✓' : changed ? '변환 필요' : '변환 불필요';
+
+                return '<div class="file-item">' +
+                    '<div class="name" title="' + escapeHtml(f.original) + '">' + escapeHtml(f.original) + '</div>' +
+                    '<div class="name ' + (changed ? 'converted' : 'no-change') + '" title="' + escapeHtml(f.converted) + '">' + escapeHtml(f.converted) + '</div>' +
+                    '<div class="' + statusClass + '">' + statusText + '</div>' +
+                    '</div>';
+            }).join('');
+
+            const needConvert = fileEntries.filter(f => f.original !== f.converted && !f.done).length;
+            const total = fileEntries.length;
+            countEl.textContent = '총 ' + total + '개 파일' + (needConvert > 0 ? ' (' + needConvert + '개 변환 필요)' : '');
+        }
+
+        async function convertAll() {
+            const toConvert = fileEntries.filter(f => f.original !== f.converted && !f.done);
+            if (toConvert.length === 0) {
+                alert('변환이 필요한 파일이 없습니다.');
+                return;
+            }
+
+            const progressBar = document.getElementById('progressBar');
+            const progressFill = document.getElementById('progressFill');
+            const convertBtn = document.getElementById('convertBtn');
+
+            progressBar.style.display = 'block';
+            convertBtn.disabled = true;
+
+            for (let i = 0; i < toConvert.length; i++) {
+                const entry = toConvert[i];
+
+                // 파일을 읽고 새 이름으로 다운로드
+                await downloadWithNewName(entry.file, entry.converted);
+                entry.done = true;
+
+                const pct = ((i + 1) / toConvert.length * 100);
+                progressFill.style.width = pct + '%';
+
+                // 다운로드 사이에 약간의 딜레이 (브라우저 부하 방지)
+                if (toConvert.length > 1) {
+                    await sleep(300);
+                }
+            }
+
+            convertBtn.disabled = false;
+            renderFiles();
+
+            setTimeout(() => {
+                progressBar.style.display = 'none';
+                progressFill.style.width = '0%';
+            }, 1000);
+        }
+
+        function downloadWithNewName(file, newName) {
+            return new Promise(resolve => {
+                const url = URL.createObjectURL(file);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = newName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                resolve();
+            });
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        function clearAll() {
+            fileEntries = [];
+            renderFiles();
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

@@ -22,7 +22,14 @@ macOS는 유니코드 **NFD**(Normalization Form Decomposition)를 사용하고,
 
 ## 사용 방법
 
-### 방법 1: 데스크톱 앱 (tkinter GUI)
+### 방법 1: 온라인 웹 버전 (설치 불필요)
+
+<https://seongjaeryu.github.io/file-name-format-converter/>
+
+브라우저에서 바로 사용 가능합니다. 파일을 드래그앤드롭하면 변환된 파일명으로 다운로드됩니다.
+모든 처리는 브라우저에서 이루어지며, 파일이 서버로 전송되지 않습니다.
+
+### 방법 2: 데스크톱 앱 (tkinter GUI)
 
 ```bash
 # 의존성 설치 (드래그앤드롭 지원)
@@ -34,7 +41,7 @@ python app.py
 
 파일을 드래그앤드롭하거나 파일 선택 버튼으로 추가 → "변환 실행" 클릭
 
-### 방법 2: 웹 버전 (브라우저)
+### 방법 3: 로컬 웹 버전 (브라우저)
 
 ```bash
 # 추가 의존성 없이 실행 가능
@@ -46,10 +53,11 @@ python web.py
 
 ## 파일 구조
 
-```
-├── converter.py   # 파일명 변환 핵심 로직
-├── app.py         # 데스크톱 GUI (tkinter)
-├── web.py         # 웹 버전 (로컬 서버)
+```text
+├── docs/index.html  # 온라인 웹 버전 (GitHub Pages)
+├── converter.py     # 파일명 변환 핵심 로직
+├── app.py           # 데스크톱 GUI (tkinter)
+├── web.py           # 로컬 웹 버전 (로컬 서버)
 └── requirements.txt
 ```
 
