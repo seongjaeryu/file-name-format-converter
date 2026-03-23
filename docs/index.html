@@ -632,6 +632,29 @@
             return perm === 'granted';
         }
 
+        // === OS 감지 ===
+        const isMacOS = /Macintosh|Mac OS X/i.test(navigator.userAgent);
+
+        // === Direct 모드: 충돌 방지 파일명 생성 (Windows/NTFS용) ===
+        async function getSafeFilename(dirH, name) {
+            try {
+                await dirH.getFileHandle(name);
+                const [stem, ext] = splitExt(name);
+                let counter = 1;
+                while (true) {
+                    const candidate = stem + ' (' + counter + ')' + ext;
+                    try {
+                        await dirH.getFileHandle(candidate);
+                        counter++;
+                    } catch {
+                        return candidate;
+                    }
+                }
+            } catch {
+                return name;
+            }
+        }
+
         // === Direct 모드: 에러 메시지 한국어 변환 ===
         function friendlyError(e) {
             const msg = e.message || String(e);
@@ -659,15 +682,48 @@
             }
         }
 
-        // === Direct 모드: 단일 파일 변환 실행 ===
-        // macOS APFS는 NFD/NFC를 같은 파일명으로 취급하므로
-        // 임시 파일 경유: 원본 → 임시 복사 → 원본 삭제 → 최종 이름으로 복사 → 임시 삭제
-        async function renameEntry(entry) {
-            const targetHandle = entry.dirHandle || entry.fileHandle;
-            if (!await ensureWritePermission(targetHandle)) {
-                throw new Error('쓰기 권한이 거부되었습니다');
-            }
+        // === Direct 모드: 단일 파일 변환 (Windows/NTFS) ===
+        // NTFS는 NFD/NFC를 다른 파일명으로 취급하므로 단순 복사+삭제로 rename
+        async function renameEntryWindows(entry) {
+            if (entry.dirHandle) {
+                const safeName = await getSafeFilename(entry.dirHandle, entry.converted);
+                entry.converted = safeName;
 
+                let file;
+                try {
+                    file = await entry.fileHandle.getFile();
+                } catch (e) {
+                    throw new Error('파일을 찾을 수 없습니다 (외부에서 삭제/이동됨)');
+                }
+
+                const newHandle = await entry.dirHandle.getFileHandle(safeName, { create: true });
+                const writable = await newHandle.createWritable();
+
+                try {
+                    await copyFileContent(file, writable);
+                } catch (e) {
+                    try { await entry.dirHandle.removeEntry(safeName); } catch {}
+                    throw e;
+                }
+
+                try {
+                    await entry.dirHandle.removeEntry(entry.original);
+                } catch (e) {
+                    entry.warning = '변환 완료되었으나 원본 파일 삭제 실패 (수동 삭제 필요)';
+                }
+            } else {
+                if (entry.fileHandle.move) {
+                    await entry.fileHandle.move(entry.converted);
+                } else {
+                    throw new Error('개별 파일 변환은 Chrome 110+ 필요. 폴더째로 드롭해주세요.');
+                }
+            }
+        }
+
+        // === Direct 모드: 단일 파일 변환 (macOS/APFS) ===
+        // APFS는 NFD/NFC를 같은 파일명으로 취급하므로
+        // 임시 파일 경유: 원본 → 임시 복사 → 원본 삭제 → 최종 이름으로 복사 → 임시 삭제
+        async function renameEntryMac(entry) {
             if (entry.dirHandle) {
                 let file;
                 try {
@@ -692,7 +748,6 @@
                 try {
                     await entry.dirHandle.removeEntry(entry.original);
                 } catch (e) {
-                    // 원본 삭제 실패 → 임시 파일 정리
                     try { await entry.dirHandle.removeEntry(tempName); } catch {}
                     throw new Error('원본 파일 삭제 실패: ' + e.message);
                 }
@@ -705,7 +760,6 @@
                     const finalWritable = await finalHandle.createWritable();
                     await copyFileContent(tempFile, finalWritable);
                 } catch (e) {
-                    // 최종 복사 실패 → 임시 파일은 남겨둠 (데이터 보존)
                     entry.warning = '변환 중 오류. 임시 파일(' + tempName + ')에 데이터가 보존되어 있습니다.';
                     throw e;
                 }
@@ -717,12 +771,25 @@
                     entry.warning = '변환 완료. 임시 파일(' + tempName + ') 수동 삭제 필요.';
                 }
             } else {
-                // 개별 파일: move() 사용, 미지원 시 에러 안내
                 if (entry.fileHandle.move) {
                     await entry.fileHandle.move(entry.converted);
                 } else {
                     throw new Error('개별 파일 변환은 Chrome 110+ 필요. 폴더째로 드롭해주세요.');
                 }
+            }
+        }
+
+        // === Direct 모드: OS에 따라 적절한 변환 방식 선택 ===
+        async function renameEntry(entry) {
+            const targetHandle = entry.dirHandle || entry.fileHandle;
+            if (!await ensureWritePermission(targetHandle)) {
+                throw new Error('쓰기 권한이 거부되었습니다');
+            }
+
+            if (isMacOS) {
+                await renameEntryMac(entry);
+            } else {
+                await renameEntryWindows(entry);
             }
         }
 
