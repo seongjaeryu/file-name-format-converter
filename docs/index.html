@@ -30,6 +30,37 @@
             color: #1a6db0;
             line-height: 1.6;
         }
+        .info-box.warn {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .mode-toggle {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 24px;
+            background: white;
+            border-radius: 12px;
+            padding: 6px;
+        }
+        .mode-btn {
+            flex: 1;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            background: transparent;
+            color: #86868b;
+            transition: all 0.2s;
+        }
+        .mode-btn.active {
+            background: #0071e3;
+            color: white;
+        }
+        .mode-btn:not(.active):hover {
+            background: #f0f0f0;
+        }
         .drop-zone {
             background: white;
             border: 2px dashed #d2d2d7;
@@ -79,6 +110,7 @@
         .status-done { color: #34c759; font-weight: 500; }
         .status-needed { color: #ff9500; font-weight: 500; }
         .status-same { color: #86868b; }
+        .status-error { color: #ff3b30; font-weight: 500; }
         .actions {
             display: flex;
             justify-content: space-between;
@@ -146,16 +178,33 @@
         <h1>파일명 포맷 컨버터</h1>
         <p class="subtitle">macOS 파일명(NFD)을 Windows 호환 포맷(NFC)으로 변환합니다</p>
 
-        <div class="info-box">
-            <strong>사용 방법:</strong> 파일을 아래 영역에 드래그 & 드롭하면 파일명이 변환되어 자동으로 다운로드됩니다.<br>
-            모든 처리는 브라우저에서 이루어지며, 파일이 서버로 전송되지 않습니다.
+        <div class="mode-toggle">
+            <button class="mode-btn active" id="modeDirect" onclick="setMode('direct')">
+                로컬 파일 직접 변환
+            </button>
+            <button class="mode-btn" id="modeDownload" onclick="setMode('download')">
+                다운로드 방식
+            </button>
+        </div>
+
+        <div class="info-box" id="infoBoxDirect">
+            <strong>로컬 파일 직접 변환:</strong> "폴더 선택" 후 변환하면 원본 파일명이 바로 변경됩니다.<br>
+            Chrome / Edge에서만 지원됩니다. 모든 처리는 브라우저에서 이루어지며, 파일이 서버로 전송되지 않습니다.
+        </div>
+
+        <div class="info-box" id="infoBoxDownload" style="display: none;">
+            <strong>다운로드 방식:</strong> 파일을 드래그 & 드롭하면 변환된 파일명으로 다운로드됩니다.<br>
+            모든 브라우저에서 사용 가능합니다. 파일이 서버로 전송되지 않습니다.
+        </div>
+
+        <div class="info-box warn" id="infoBoxUnsupported" style="display: none;">
+            이 브라우저는 로컬 파일 직접 변환을 지원하지 않습니다. 다운로드 방식을 사용해주세요.
         </div>
 
         <div class="drop-zone" id="dropZone">
             <p>
                 <span class="icon">📁</span>
-                파일을 여기에 드래그 & 드롭 하세요<br>
-                또는 클릭하여 파일 선택
+                <span id="dropZoneText">폴더를 선택하여 파일명을 직접 변환하세요</span>
             </p>
         </div>
         <input type="file" id="fileInput" multiple hidden>
@@ -178,7 +227,7 @@
             <div style="display: flex; gap: 8px;">
                 <button class="btn-secondary" onclick="clearAll()">목록 초기화</button>
                 <button class="btn-primary" id="convertBtn" onclick="convertAll()">
-                    변환 & 다운로드
+                    변환 실행
                 </button>
             </div>
         </div>
@@ -194,7 +243,7 @@
     </div>
 
     <script>
-        // Windows 금지 문자
+        // === 변환 로직 ===
         const FORBIDDEN_RE = /[<>:"\/\\|?*]/g;
         const RESERVED_NAMES = new Set([
             'CON','PRN','AUX','NUL',
@@ -202,13 +251,81 @@
             'LPT1','LPT2','LPT3','LPT4','LPT5','LPT6','LPT7','LPT8','LPT9',
         ]);
 
-        let fileEntries = []; // { file: File, original: string, converted: string }
+        function splitExt(name) {
+            const dot = name.lastIndexOf('.');
+            if (dot <= 0) return [name, ''];
+            return [name.substring(0, dot), name.substring(dot)];
+        }
 
-        // 드래그앤드롭 설정
+        function convertFilename(name) {
+            let result = name.normalize('NFC');
+            result = result.replace(FORBIDDEN_RE, '_');
+            const [stem, ext] = splitExt(result);
+            if (RESERVED_NAMES.has(stem.toUpperCase())) {
+                result = '_' + stem + ext;
+            }
+            let stripped = result.replace(/[\s.]+$/, '');
+            if (!stripped) stripped = '_';
+            const [stem2, ext2] = splitExt(stripped);
+            result = (stem2 || '_') + ext2;
+            return result;
+        }
+
+        // === 상태 ===
+        const HAS_FS_ACCESS = ('showDirectoryPicker' in window);
+        let currentMode = HAS_FS_ACCESS ? 'direct' : 'download';
+        let fileEntries = [];
+        let dirHandle = null; // File System Access API용 디렉토리 핸들
+
+        // === 모드 전환 ===
+        function setMode(mode) {
+            if (mode === 'direct' && !HAS_FS_ACCESS) {
+                document.getElementById('infoBoxUnsupported').style.display = 'block';
+                return;
+            }
+            document.getElementById('infoBoxUnsupported').style.display = 'none';
+
+            currentMode = mode;
+            clearAll();
+
+            document.getElementById('modeDirect').classList.toggle('active', mode === 'direct');
+            document.getElementById('modeDownload').classList.toggle('active', mode === 'download');
+            document.getElementById('infoBoxDirect').style.display = mode === 'direct' ? 'block' : 'none';
+            document.getElementById('infoBoxDownload').style.display = mode === 'download' ? 'block' : 'none';
+
+            const convertBtn = document.getElementById('convertBtn');
+            if (mode === 'direct') {
+                document.getElementById('dropZoneText').innerHTML =
+                    '클릭하여 폴더를 선택하세요<br>폴더 내 파일명을 직접 변환합니다';
+                convertBtn.textContent = '파일명 변환';
+            } else {
+                document.getElementById('dropZoneText').innerHTML =
+                    '파일을 여기에 드래그 & 드롭 하세요<br>또는 클릭하여 파일 선택';
+                convertBtn.textContent = '변환 & 다운로드';
+            }
+        }
+
+        // === 초기화 ===
+        (function init() {
+            if (!HAS_FS_ACCESS) {
+                currentMode = 'download';
+                setMode('download');
+            } else {
+                setMode('direct');
+            }
+        })();
+
+        // === 드래그앤드롭 / 클릭 ===
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
 
-        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('click', async () => {
+            if (currentMode === 'direct') {
+                await pickDirectory();
+            } else {
+                fileInput.click();
+            }
+        });
 
         dropZone.addEventListener('dragover', e => {
             e.preventDefault();
@@ -222,51 +339,172 @@
         dropZone.addEventListener('drop', e => {
             e.preventDefault();
             dropZone.classList.remove('drag-over');
-            addFiles(e.dataTransfer.files);
+            if (currentMode === 'download') {
+                addFilesForDownload(e.dataTransfer.files);
+            }
+            // direct 모드에서는 드롭 무시 (폴더 선택 필요)
         });
 
         fileInput.addEventListener('change', e => {
-            addFiles(e.target.files);
+            addFilesForDownload(e.target.files);
             fileInput.value = '';
         });
 
-        function splitExt(name) {
-            const dot = name.lastIndexOf('.');
-            if (dot <= 0) return [name, ''];
-            return [name.substring(0, dot), name.substring(dot)];
-        }
-
-        function convertFilename(name) {
-            // 1. NFD → NFC
-            let result = name.normalize('NFC');
-
-            // 2. Windows 금지 문자 대체
-            result = result.replace(FORBIDDEN_RE, '_');
-
-            // 3. Windows 예약 파일명
-            const [stem, ext] = splitExt(result);
-            if (RESERVED_NAMES.has(stem.toUpperCase())) {
-                result = '_' + stem + ext;
+        // === 로컬 직접 변환 모드 (File System Access API) ===
+        async function pickDirectory() {
+            try {
+                dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+            } catch (e) {
+                // 사용자가 취소한 경우
+                return;
             }
 
-            // 4. 끝 마침표/공백 제거
-            let stripped = result.replace(/[\s.]+$/, '');
-            if (!stripped) stripped = '_';
-            const [stem2, ext2] = splitExt(stripped);
-            result = (stem2 || '_') + ext2;
+            fileEntries = [];
+            for await (const entry of dirHandle.values()) {
+                if (entry.kind === 'file') {
+                    const original = entry.name;
+                    const converted = convertFilename(original);
+                    fileEntries.push({
+                        handle: entry,
+                        original,
+                        converted,
+                        done: false,
+                        error: null,
+                    });
+                }
+            }
 
-            return result;
+            if (fileEntries.length === 0) {
+                alert('폴더에 파일이 없습니다.');
+                return;
+            }
+
+            renderFiles();
         }
 
-        function addFiles(fileList) {
+        async function convertDirect() {
+            const toConvert = fileEntries.filter(f => f.original !== f.converted && !f.done);
+            if (toConvert.length === 0) {
+                alert('변환이 필요한 파일이 없습니다.');
+                return;
+            }
+
+            const progressBar = document.getElementById('progressBar');
+            const progressFill = document.getElementById('progressFill');
+            const convertBtn = document.getElementById('convertBtn');
+            progressBar.style.display = 'block';
+            convertBtn.disabled = true;
+
+            let successCount = 0;
+            let errorCount = 0;
+
+            for (let i = 0; i < toConvert.length; i++) {
+                const entry = toConvert[i];
+                try {
+                    // 1. 원본 파일 읽기
+                    const fileHandle = entry.handle;
+                    const file = await fileHandle.getFile();
+                    const data = await file.arrayBuffer();
+
+                    // 2. 새 이름으로 파일 생성
+                    const newHandle = await dirHandle.getFileHandle(entry.converted, { create: true });
+                    const writable = await newHandle.createWritable();
+                    await writable.write(data);
+                    await writable.close();
+
+                    // 3. 원본 파일 삭제
+                    await dirHandle.removeEntry(entry.original);
+
+                    entry.done = true;
+                    successCount++;
+                } catch (e) {
+                    entry.error = e.message;
+                    errorCount++;
+                }
+
+                const pct = ((i + 1) / toConvert.length * 100);
+                progressFill.style.width = pct + '%';
+            }
+
+            convertBtn.disabled = false;
+            renderFiles();
+
+            setTimeout(() => {
+                progressBar.style.display = 'none';
+                progressFill.style.width = '0%';
+            }, 1000);
+
+            let msg = successCount + '개 파일명 변환 완료';
+            if (errorCount > 0) msg += ', ' + errorCount + '개 오류';
+            alert(msg);
+        }
+
+        // === 다운로드 모드 ===
+        function addFilesForDownload(fileList) {
             for (const file of fileList) {
-                // 중복 체크
-                if (fileEntries.some(e => e.original === file.name && e.file.size === file.size)) {
+                if (fileEntries.some(e => e.original === file.name && e.file && e.file.size === file.size)) {
                     continue;
                 }
                 const converted = convertFilename(file.name);
                 fileEntries.push({ file, original: file.name, converted, done: false });
             }
+            renderFiles();
+        }
+
+        async function convertDownload() {
+            const toConvert = fileEntries.filter(f => f.original !== f.converted && !f.done);
+            if (toConvert.length === 0) {
+                alert('변환이 필요한 파일이 없습니다.');
+                return;
+            }
+
+            const progressBar = document.getElementById('progressBar');
+            const progressFill = document.getElementById('progressFill');
+            const convertBtn = document.getElementById('convertBtn');
+            progressBar.style.display = 'block';
+            convertBtn.disabled = true;
+
+            for (let i = 0; i < toConvert.length; i++) {
+                const entry = toConvert[i];
+                const url = URL.createObjectURL(entry.file);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = entry.converted;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                entry.done = true;
+
+                const pct = ((i + 1) / toConvert.length * 100);
+                progressFill.style.width = pct + '%';
+
+                if (toConvert.length > 1) {
+                    await new Promise(r => setTimeout(r, 300));
+                }
+            }
+
+            convertBtn.disabled = false;
+            renderFiles();
+
+            setTimeout(() => {
+                progressBar.style.display = 'none';
+                progressFill.style.width = '0%';
+            }, 1000);
+        }
+
+        // === 공통 ===
+        function convertAll() {
+            if (currentMode === 'direct') {
+                convertDirect();
+            } else {
+                convertDownload();
+            }
+        }
+
+        function clearAll() {
+            fileEntries = [];
+            dirHandle = null;
             renderFiles();
         }
 
@@ -287,8 +525,12 @@
 
             container.innerHTML = fileEntries.map(f => {
                 const changed = f.original !== f.converted;
-                const statusClass = f.done ? 'status-done' : changed ? 'status-needed' : 'status-same';
-                const statusText = f.done ? '완료 ✓' : changed ? '변환 필요' : '변환 불필요';
+                const statusClass = f.done ? 'status-done'
+                    : f.error ? 'status-error'
+                    : changed ? 'status-needed' : 'status-same';
+                const statusText = f.done ? '완료 ✓'
+                    : f.error ? '오류'
+                    : changed ? '변환 필요' : '변환 불필요';
 
                 return '<div class="file-item">' +
                     '<div class="name" title="' + escapeHtml(f.original) + '">' + escapeHtml(f.original) + '</div>' +
@@ -300,68 +542,6 @@
             const needConvert = fileEntries.filter(f => f.original !== f.converted && !f.done).length;
             const total = fileEntries.length;
             countEl.textContent = '총 ' + total + '개 파일' + (needConvert > 0 ? ' (' + needConvert + '개 변환 필요)' : '');
-        }
-
-        async function convertAll() {
-            const toConvert = fileEntries.filter(f => f.original !== f.converted && !f.done);
-            if (toConvert.length === 0) {
-                alert('변환이 필요한 파일이 없습니다.');
-                return;
-            }
-
-            const progressBar = document.getElementById('progressBar');
-            const progressFill = document.getElementById('progressFill');
-            const convertBtn = document.getElementById('convertBtn');
-
-            progressBar.style.display = 'block';
-            convertBtn.disabled = true;
-
-            for (let i = 0; i < toConvert.length; i++) {
-                const entry = toConvert[i];
-
-                // 파일을 읽고 새 이름으로 다운로드
-                await downloadWithNewName(entry.file, entry.converted);
-                entry.done = true;
-
-                const pct = ((i + 1) / toConvert.length * 100);
-                progressFill.style.width = pct + '%';
-
-                // 다운로드 사이에 약간의 딜레이 (브라우저 부하 방지)
-                if (toConvert.length > 1) {
-                    await sleep(300);
-                }
-            }
-
-            convertBtn.disabled = false;
-            renderFiles();
-
-            setTimeout(() => {
-                progressBar.style.display = 'none';
-                progressFill.style.width = '0%';
-            }, 1000);
-        }
-
-        function downloadWithNewName(file, newName) {
-            return new Promise(resolve => {
-                const url = URL.createObjectURL(file);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = newName;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-                resolve();
-            });
-        }
-
-        function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
-        }
-
-        function clearAll() {
-            fileEntries = [];
-            renderFiles();
         }
 
         function escapeHtml(str) {
