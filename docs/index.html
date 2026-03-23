@@ -80,14 +80,50 @@
             overflow: hidden;
             margin-bottom: 24px;
         }
-        .file-list-header {
+        .file-list-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 20px;
+            background: #f5f5f7;
+            border-bottom: 1px solid #e8e8ed;
+        }
+        .file-list-card-header .card-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            font-size: 15px;
+        }
+        .file-list-card-header .card-title .badge {
+            background: #0071e3;
+            color: white;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 600;
+        }
+        .file-list-card-header .card-title .badge.warn {
+            background: #ff9500;
+        }
+        .file-list-card-header .card-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .file-list-card-header .card-actions button {
+            padding: 8px 16px;
+            font-size: 13px;
+        }
+        .file-list-col-header {
             display: grid;
             grid-template-columns: 1fr 1fr 100px 80px;
-            padding: 12px 20px;
-            background: #f5f5f7;
+            padding: 10px 20px;
+            background: #fafafa;
             font-weight: 600;
-            font-size: 13px;
+            font-size: 12px;
             color: #86868b;
+            border-bottom: 1px solid #f0f0f0;
         }
         .file-item {
             display: grid;
@@ -145,6 +181,23 @@
         .btn-primary { background: #0071e3; color: white; }
         .btn-primary:hover { background: #0077ed; }
         .btn-primary:disabled { background: #d2d2d7; cursor: not-allowed; }
+        .btn-primary.loading {
+            background: #0071e3;
+            opacity: 0.85;
+            pointer-events: none;
+        }
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
         .btn-secondary { background: #e8e8ed; color: #1d1d1f; }
         .btn-secondary:hover { background: #d2d2d7; }
         .btn-item {
@@ -158,12 +211,6 @@
             cursor: default;
         }
 
-        .actions {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .file-count { color: #86868b; font-size: 14px; }
 
         .progress-bar {
             display: none;
@@ -243,9 +290,13 @@
         @media (max-width: 600px) {
             body { padding: 20px 12px; }
             h1 { font-size: 22px; }
-            .file-list-header, .file-item {
+            .file-list-col-header, .file-item {
                 grid-template-columns: 1fr 1fr 70px 60px;
                 padding: 10px 12px;
+                font-size: 12px;
+            }
+            .file-list-card-header .card-actions button {
+                padding: 6px 12px;
                 font-size: 12px;
             }
             .btn-item { padding: 4px 8px; font-size: 11px; }
@@ -293,21 +344,23 @@
         </div>
 
         <div class="file-list" id="fileList" style="display: none;">
-            <div class="file-list-header">
+            <div class="file-list-card-header">
+                <div class="card-title">
+                    <span>목록</span>
+                    <span class="badge" id="fileBadge">0</span>
+                </div>
+                <div class="card-actions">
+                    <button class="btn-secondary" onclick="clearAll()">목록 초기화</button>
+                    <button class="btn-primary" id="convertBtn" onclick="convertAll()">전체 변환</button>
+                </div>
+            </div>
+            <div class="file-list-col-header">
                 <div>원래 파일명</div>
                 <div>변환 후 파일명</div>
                 <div>상태</div>
                 <div>액션</div>
             </div>
             <div id="fileItems"></div>
-        </div>
-
-        <div class="actions" id="actions" style="display: none;">
-            <span class="file-count" id="fileCount"></span>
-            <div style="display: flex; gap: 8px;">
-                <button class="btn-secondary" onclick="clearAll()">목록 초기화</button>
-                <button class="btn-primary" id="convertBtn" onclick="convertAll()">변환 실행</button>
-            </div>
         </div>
 
         <div class="footer">
@@ -435,15 +488,14 @@
             document.getElementById('infoBoxDirect').style.display = mode === 'direct' ? 'block' : 'none';
             document.getElementById('infoBoxDownload').style.display = mode === 'download' ? 'block' : 'none';
 
-            const convertBtn = document.getElementById('convertBtn');
             if (mode === 'direct') {
                 document.getElementById('dropZoneText').innerHTML =
                     '파일 또는 폴더를 여기에 드래그 & 드롭<br>또는 클릭하여 폴더 선택';
-                convertBtn.textContent = '전체 변환';
+                document.getElementById('convertBtn').textContent = '전체 변환';
             } else {
                 document.getElementById('dropZoneText').innerHTML =
                     '파일을 여기에 드래그 & 드롭 하세요<br>또는 클릭하여 파일 선택';
-                convertBtn.textContent = '전체 다운로드';
+                document.getElementById('convertBtn').textContent = '전체 다운로드';
             }
         }
 
@@ -809,9 +861,16 @@
             if (show) {
                 bar.style.display = 'block';
                 btn.disabled = true;
+                btn.dataset.loading = '1';
+                btn.classList.add('loading');
+                btn.innerHTML = '<span class="spinner"></span>진행 중...';
                 document.getElementById('progressFill').style.width = '0%';
             } else {
+                delete btn.dataset.loading;
+                btn.classList.remove('loading');
                 btn.disabled = false;
+                const label = currentMode === 'direct' ? '전체 변환' : '전체 다운로드';
+                btn.textContent = label;
                 setTimeout(() => {
                     bar.style.display = 'none';
                     document.getElementById('progressFill').style.width = '0%';
@@ -864,17 +923,13 @@
         function renderFiles() {
             const container = document.getElementById('fileItems');
             const fileListEl = document.getElementById('fileList');
-            const actionsEl = document.getElementById('actions');
-            const countEl = document.getElementById('fileCount');
 
             if (fileEntries.length === 0) {
                 fileListEl.style.display = 'none';
-                actionsEl.style.display = 'none';
                 return;
             }
 
             fileListEl.style.display = 'block';
-            actionsEl.style.display = 'flex';
 
             detectConvertedCollisions();
 
@@ -934,9 +989,19 @@
                     '</div>';
             }).join('');
 
-            const needConvert = fileEntries.filter(f => f.original !== f.converted && !f.done && !f.error).length;
+            const needConvert = fileEntries.filter(f => f.original !== f.converted && !f.done).length;
             const total = fileEntries.length;
-            countEl.textContent = '총 ' + total + '개' + (needConvert > 0 ? ' (' + needConvert + '개 변환 필요)' : '');
+
+            // 카드 헤더 배지 업데이트
+            const badge = document.getElementById('fileBadge');
+            badge.textContent = needConvert > 0 ? needConvert + '개 변환 필요' : total + '개';
+            badge.classList.toggle('warn', needConvert > 0);
+
+            // 변환할 것 없으면 전체 변환 disabled
+            const convertBtn = document.getElementById('convertBtn');
+            if (!convertBtn.dataset.loading) {
+                convertBtn.disabled = needConvert === 0;
+            }
         }
 
         function escapeHtml(str) {
