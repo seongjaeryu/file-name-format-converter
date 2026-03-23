@@ -600,6 +600,7 @@
         // === Direct 모드: 드래그앤드롭 처리 ===
         async function handleDirectDrop(items) {
             let added = 0;
+            let fileDropped = false;
 
             for (const item of items) {
                 if (!item.getAsFileSystemHandle) continue;
@@ -610,24 +611,14 @@
                 if (handle.kind === 'directory') {
                     added += await scanDirectory(handle, handle.name);
                 } else if (handle.kind === 'file') {
-                    const name = handle.name;
-                    const source = '(개별 파일)';
-                    if (isDuplicate(source, name)) continue;
-                    fileEntries.push({
-                        fileHandle: handle,
-                        dirHandle: null,
-                        original: name,
-                        converted: convertFilename(name),
-                        source,
-                        done: false,
-                        error: null,
-                    });
-                    added++;
+                    fileDropped = true;
                 }
             }
 
-            if (added === 0 && fileEntries.length === 0) {
-                alert('추가할 파일이 없습니다.');
+            if (fileDropped && added === 0) {
+                alert('파일이 아닌 폴더를 드롭해주세요.\n\n개별 파일은 변환 필요 여부를 감지할 수 없습니다.\n파일이 들어있는 폴더를 통째로 드래그 & 드롭하세요.');
+            } else if (added === 0 && fileEntries.length === 0) {
+                alert('폴더에 파일이 없습니다.');
             }
             renderFiles();
         }
