@@ -712,12 +712,14 @@
                 throw new Error('쓰기 권한이 거부되었습니다');
             }
 
-            if (!entry.dirHandle) {
-                throw new Error('폴더째로 드롭하면 변환할 수 있습니다.');
-            }
-
             if (!entry.fileHandle.move) {
                 throw new Error('파일 이름 변경 미지원 브라우저입니다. Chrome 110+ 필요.');
+            }
+
+            if (!entry.dirHandle) {
+                // 개별 파일 (Windows): dirHandle 없이 move(newName)으로 직접 rename
+                await entry.fileHandle.move(entry.converted);
+                return;
             }
 
             const suffix = '~' + Math.random().toString(36).slice(2, 4) + '~nfc';
