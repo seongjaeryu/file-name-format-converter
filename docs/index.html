@@ -675,11 +675,66 @@
             return msg;
         }
 
-        // === Direct 모드: 단일 파일 변환 ===
-        // 임시 이름 경유 move 2회: 원본 → 임시이름(~xx~nfc) → 최종NFC이름
-        // Mac(APFS)은 NFD/NFC를 같은 이름으로 취급하므로 임시 경유 필수,
-        // Windows(NTFS)도 동일 로직으로 통일하여 코드 단순화.
+        // === Direct 모드: 파일 내용 복사 유틸 ===
+        async function copyFileContent(sourceFile, destWritable) {
+            if (sourceFile.stream && typeof sourceFile.stream === 'function') {
+                await sourceFile.stream().pipeTo(destWritable);
+            } else {
+                const data = await sourceFile.arrayBuffer();
+                await destWritable.write(data);
+                await destWritable.close();
+            }
+        }
+
+        // === Direct 모드: 복사+삭제 방식으로 이름 변경 (move 미지원 폴백) ===
+        // 임시 이름 경유: 원본 → 임시 복사 → 원본 삭제 → 최종 복사 → 임시 삭제
+        // APFS에서 NFD/NFC가 같은 이름이므로 임시 경유 필수.
         // 실패 시 *~nfc 검색으로 중간 상태 파일을 쉽게 찾을 수 있음.
+        async function renameViaCopy(entry) {
+            const file = await entry.fileHandle.getFile();
+            const suffix = '~' + Math.random().toString(36).slice(2, 4) + '~nfc';
+            const tempName = entry.original + suffix;
+
+            // 1단계: 원본 → 임시 파일로 복사
+            try {
+                const tempHandle = await entry.dirHandle.getFileHandle(tempName, { create: true });
+                const tempWritable = await tempHandle.createWritable();
+                await copyFileContent(file, tempWritable);
+            } catch (e) {
+                try { await entry.dirHandle.removeEntry(tempName); } catch {}
+                throw e;
+            }
+
+            // 2단계: 원본 삭제
+            try {
+                await entry.dirHandle.removeEntry(entry.original);
+            } catch (e) {
+                try { await entry.dirHandle.removeEntry(tempName); } catch {}
+                throw new Error('원본 파일 삭제 실패: ' + e.message);
+            }
+
+            // 3단계: 임시 → 최종 NFC 이름으로 복사
+            try {
+                const tempHandle = await entry.dirHandle.getFileHandle(tempName);
+                const tempFile = await tempHandle.getFile();
+                const finalHandle = await entry.dirHandle.getFileHandle(entry.converted, { create: true });
+                const finalWritable = await finalHandle.createWritable();
+                await copyFileContent(tempFile, finalWritable);
+            } catch (e) {
+                entry.warning = '파일이 임시 이름(' + tempName + ')으로 남아 있습니다. *~nfc 로 검색하세요.';
+                throw e;
+            }
+
+            // 4단계: 임시 파일 삭제
+            try {
+                await entry.dirHandle.removeEntry(tempName);
+            } catch (e) {
+                entry.warning = '변환 완료. 임시 파일(' + tempName + ') 수동 삭제 필요.';
+            }
+        }
+
+        // === Direct 모드: 단일 파일 변환 ===
+        // move() 우선 시도, 실패 시 복사+삭제 폴백.
         async function renameEntry(entry) {
             const targetHandle = entry.dirHandle || entry.fileHandle;
             if (!await ensureWritePermission(targetHandle)) {
@@ -687,33 +742,35 @@
             }
 
             if (entry.dirHandle) {
-                if (!entry.fileHandle.move) {
-                    throw new Error('파일 이름 변경 미지원 브라우저입니다. Chrome 110+ 필요.');
+                // move() 2회 방식 시도
+                if (entry.fileHandle.move) {
+                    const suffix = '~' + Math.random().toString(36).slice(2, 4) + '~nfc';
+                    const tempName = entry.original + suffix;
+                    try {
+                        await entry.fileHandle.move(entry.dirHandle, tempName);
+                        try {
+                            await entry.fileHandle.move(entry.dirHandle, entry.converted);
+                            return; // 성공
+                        } catch (e) {
+                            entry.warning = '파일이 임시 이름(' + tempName + ')으로 남아 있습니다. *~nfc 로 검색하세요.';
+                            throw e;
+                        }
+                    } catch (moveErr) {
+                        if (entry.warning) throw moveErr; // 2단계 실패는 그대로 throw
+                        // 1단계 move 실패 → 복사+삭제 폴백
+                    }
                 }
 
-                const suffix = '~' + Math.random().toString(36).slice(2, 4) + '~nfc';
-                const tempName = entry.original + suffix;
-
-                // 1단계: 원본 → 임시 이름으로 rename
-                try {
-                    await entry.fileHandle.move(entry.dirHandle, tempName);
-                } catch (e) {
-                    throw new Error('임시 이름 변경 실패: ' + e.message);
-                }
-
-                // 2단계: 임시 이름 → 최종 NFC 이름으로 rename
-                try {
-                    await entry.fileHandle.move(entry.dirHandle, entry.converted);
-                } catch (e) {
-                    entry.warning = '파일이 임시 이름(' + tempName + ')으로 남아 있습니다. *~nfc 로 검색하세요.';
-                    throw e;
-                }
+                // move 미지원 또는 move 실패 → 복사+삭제 방식
+                await renameViaCopy(entry);
             } else {
                 if (entry.fileHandle.move) {
-                    await entry.fileHandle.move(entry.converted);
-                } else {
-                    throw new Error('개별 파일 변환은 Chrome 110+ 필요. 폴더째로 드롭해주세요.');
+                    try {
+                        await entry.fileHandle.move(entry.converted);
+                        return;
+                    } catch {}
                 }
+                throw new Error('폴더째로 드롭하면 변환할 수 있습니다.');
             }
         }
 
