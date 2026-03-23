@@ -338,8 +338,9 @@
         </div>
 
         <div class="info-box" id="infoBoxDirect">
-            <strong>로컬 파일 직접 변환:</strong> 폴더 또는 파일을 드래그 & 드롭하거나 클릭하여 선택하세요.<br>
-            원본 파일명이 바로 변경됩니다. Chrome / Edge에서만 지원됩니다.
+            <strong>로컬 파일 직접 변환:</strong> <strong>폴더째로</strong> 드래그 & 드롭하거나 클릭하여 선택하세요.<br>
+            원본 파일명이 바로 변경됩니다. Chrome / Edge에서만 지원됩니다.<br>
+            <span style="font-size: 12px; color: #86868b;">※ 개별 파일 드롭 시 변환 필요 여부가 감지되지 않을 수 있습니다. 폴더째로 드롭해주세요.</span>
         </div>
         <div class="info-box" id="infoBoxDownload" style="display: none;">
             <strong>다운로드 방식:</strong> 파일을 드래그 & 드롭하면 변환된 파일명으로 다운로드됩니다.<br>
@@ -352,7 +353,7 @@
         <div class="drop-zone" id="dropZone">
             <p>
                 <span class="icon">📁</span>
-                <span id="dropZoneText">파일 또는 폴더를 여기에 드래그 & 드롭<br>또는 클릭하여 폴더 선택</span>
+                <span id="dropZoneText">폴더를 여기에 드래그 & 드롭<br>또는 클릭하여 폴더 선택</span>
             </p>
         </div>
         <input type="file" id="fileInput" multiple hidden>
@@ -509,7 +510,7 @@
 
             if (mode === 'direct') {
                 document.getElementById('dropZoneText').innerHTML =
-                    '파일 또는 폴더를 여기에 드래그 & 드롭<br>또는 클릭하여 폴더 선택';
+                    '폴더를 여기에 드래그 & 드롭<br>또는 클릭하여 폴더 선택';
                 document.getElementById('convertBtn').textContent = '전체 변환';
             } else {
                 document.getElementById('dropZoneText').innerHTML =
