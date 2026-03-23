@@ -456,6 +456,33 @@
             fileInput.value = '';
         });
 
+        // === Direct 모드: 폴더 재귀 스캔 ===
+        async function scanDirectory(dirH, pathPrefix) {
+            let added = 0;
+            for await (const child of dirH.values()) {
+                if (child.kind === 'file') {
+                    const name = child.name;
+                    const source = pathPrefix;
+                    if (isDuplicate(source, name)) continue;
+                    fileEntries.push({
+                        fileHandle: child,
+                        dirHandle: dirH,
+                        original: name,
+                        converted: convertFilename(name),
+                        source,
+                        done: false,
+                        error: null,
+                    });
+                    added++;
+                } else if (child.kind === 'directory') {
+                    // 하위 폴더 재귀 스캔
+                    const subPath = pathPrefix ? pathPrefix + '/' + child.name : child.name;
+                    added += await scanDirectory(child, subPath);
+                }
+            }
+            return added;
+        }
+
         // === Direct 모드: 드래그앤드롭 처리 ===
         async function handleDirectDrop(items) {
             let added = 0;
@@ -467,27 +494,8 @@
                 if (!handle) continue;
 
                 if (handle.kind === 'directory') {
-                    // 폴더 드롭 → 안의 파일들 스캔
-                    const dirH = handle;
-                    for await (const child of dirH.values()) {
-                        if (child.kind === 'file') {
-                            const name = child.name;
-                            const source = dirH.name;
-                            if (isDuplicate(source, name)) continue;
-                            fileEntries.push({
-                                fileHandle: child,
-                                dirHandle: dirH,
-                                original: name,
-                                converted: convertFilename(name),
-                                source,
-                                done: false,
-                                error: null,
-                            });
-                            added++;
-                        }
-                    }
+                    added += await scanDirectory(handle, handle.name);
                 } else if (handle.kind === 'file') {
-                    // 개별 파일 드롭
                     const name = handle.name;
                     const source = '(개별 파일)';
                     if (isDuplicate(source, name)) continue;
@@ -519,24 +527,7 @@
                 return; // 취소
             }
 
-            let added = 0;
-            for await (const child of dirH.values()) {
-                if (child.kind === 'file') {
-                    const name = child.name;
-                    const source = dirH.name;
-                    if (isDuplicate(source, name)) continue;
-                    fileEntries.push({
-                        fileHandle: child,
-                        dirHandle: dirH,
-                        original: name,
-                        converted: convertFilename(name),
-                        source,
-                        done: false,
-                        error: null,
-                    });
-                    added++;
-                }
-            }
+            const added = await scanDirectory(dirH, dirH.name);
 
             if (added === 0 && fileEntries.length === 0) {
                 alert('폴더에 파일이 없습니다.');
