@@ -127,9 +127,11 @@
         .converted { color: #0071e3; }
         .no-change { color: #86868b; }
         .status-done { color: #34c759; font-weight: 500; }
+        .status-warn { color: #ff9500; font-weight: 500; }
         .status-needed { color: #ff9500; font-weight: 500; }
         .status-same { color: #86868b; }
         .status-error { color: #ff3b30; font-weight: 500; }
+        .status-collision { color: #af52de; font-weight: 500; }
 
         button {
             padding: 12px 24px;
@@ -334,6 +336,10 @@
                 <span class="path-label">변환 후 파일명</span>
                 <div class="path-value" id="modalConverted">-</div>
             </div>
+            <div class="path-row" id="modalErrorRow" style="display: none;">
+                <span class="path-label">오류/경고</span>
+                <div class="path-value" id="modalError" style="color: #ff3b30;">-</div>
+            </div>
             <button class="btn-secondary close-btn" onclick="document.getElementById('pathModal').classList.remove('show')">닫기</button>
         </div>
     </div>
@@ -353,6 +359,8 @@
             return [name.substring(0, dot), name.substring(dot)];
         }
 
+        const WIN_MAX_FILENAME_BYTES = 255;
+
         function convertFilename(name) {
             let result = name.normalize('NFC');
             result = result.replace(FORBIDDEN_RE, '_');
@@ -364,7 +372,20 @@
             if (!stripped) stripped = '_';
             const [stem2, ext2] = splitExt(stripped);
             result = (stem2 || '_') + ext2;
+            // Windows 255바이트 제한
+            result = truncateFilename(result, WIN_MAX_FILENAME_BYTES);
             return result;
+        }
+
+        function truncateFilename(name, maxBytes) {
+            if (new Blob([name]).size <= maxBytes) return name;
+            const [stem, ext] = splitExt(name);
+            const extBytes = new Blob([ext]).size;
+            let s = stem;
+            while (new Blob([s + ext]).size > maxBytes && s.length > 0) {
+                s = s.slice(0, -1);
+            }
+            return (s || '_') + ext;
         }
 
         // === 상태 ===
@@ -382,6 +403,21 @@
         function isDuplicate(source, name) {
             const key = entryKey(source, name);
             return fileEntries.some(e => entryKey(e.source, e.original) === key);
+        }
+
+        // 배치 내 변환 결과 충돌 감지 (같은 폴더에서 같은 converted 이름)
+        function detectConvertedCollisions() {
+            const seen = {};  // "source\0converted" → count
+            for (const e of fileEntries) {
+                if (e.done) continue;
+                const key = e.source + '\0' + e.converted;
+                seen[key] = (seen[key] || 0) + 1;
+            }
+            for (const e of fileEntries) {
+                if (e.done) continue;
+                const key = e.source + '\0' + e.converted;
+                e.hasCollision = seen[key] > 1;
+            }
         }
 
         // === 모드 전환 ===
@@ -571,6 +607,22 @@
             }
         }
 
+        // === Direct 모드: 에러 메시지 한국어 변환 ===
+        function friendlyError(e) {
+            const msg = e.message || String(e);
+            if (msg.includes('not found') || msg.includes('NotFoundError'))
+                return '파일을 찾을 수 없습니다 (외부에서 삭제/이동됨)';
+            if (msg.includes('not allowed') || msg.includes('NotAllowedError'))
+                return '쓰기 권한이 거부되었습니다';
+            if (msg.includes('no modification allowed') || msg.includes('InvalidModificationError'))
+                return '파일이 사용 중이거나 수정할 수 없습니다';
+            if (msg.includes('quota') || msg.includes('QuotaExceededError'))
+                return '디스크 공간이 부족합니다';
+            if (msg.includes('abort') || msg.includes('AbortError'))
+                return '작업이 중단되었습니다';
+            return msg;
+        }
+
         // === Direct 모드: 단일 파일 변환 실행 ===
         async function renameEntry(entry) {
             const targetHandle = entry.dirHandle || entry.fileHandle;
@@ -579,16 +631,43 @@
             }
 
             if (entry.dirHandle) {
-                // 폴더 핸들이 있으면: 충돌 방지 → 스트림 복사 → 삭제
+                // 폴더 핸들이 있으면: 충돌 방지 → 복사 → 삭제
                 const safeName = await getSafeFilename(entry.dirHandle, entry.converted);
                 entry.converted = safeName;
 
-                const file = await entry.fileHandle.getFile();
+                let file;
+                try {
+                    file = await entry.fileHandle.getFile();
+                } catch (e) {
+                    throw new Error('파일을 찾을 수 없습니다 (외부에서 삭제/이동됨)');
+                }
+
                 const newHandle = await entry.dirHandle.getFileHandle(safeName, { create: true });
                 const writable = await newHandle.createWritable();
-                // 스트림으로 복사 (대용량 파일 메모리 절약)
-                await file.stream().pipeTo(writable);
-                await entry.dirHandle.removeEntry(entry.original);
+
+                try {
+                    // 스트림 복사 시도 (대용량 파일 메모리 절약)
+                    if (file.stream && typeof file.stream === 'function') {
+                        await file.stream().pipeTo(writable);
+                    } else {
+                        // stream 미지원 폴백: ArrayBuffer
+                        const data = await file.arrayBuffer();
+                        await writable.write(data);
+                        await writable.close();
+                    }
+                } catch (e) {
+                    // 복사 실패 시 불완전한 새 파일 정리 시도
+                    try { await entry.dirHandle.removeEntry(safeName); } catch {}
+                    throw e;
+                }
+
+                // 원본 삭제
+                try {
+                    await entry.dirHandle.removeEntry(entry.original);
+                } catch (e) {
+                    // 삭제 실패 → 새 파일은 이미 존재, 원본도 남아있음
+                    entry.warning = '변환 완료되었으나 원본 파일 삭제 실패 (수동 삭제 필요)';
+                }
             } else {
                 // 개별 파일: move() 사용, 미지원 시 에러 안내
                 if (entry.fileHandle.move) {
@@ -604,25 +683,29 @@
             const entry = fileEntries[idx];
             if (!entry || entry.done || entry.original === entry.converted) return;
 
+            entry.error = null; // 재시도 시 에러 초기화
             try {
                 await renameEntry(entry);
                 entry.done = true;
             } catch (e) {
-                entry.error = e.message;
+                entry.error = friendlyError(e);
             }
             renderFiles();
         }
 
         // === Direct 모드: 전체 변환 ===
         async function convertAllDirect() {
-            const toConvert = fileEntries.filter(f => f.original !== f.converted && !f.done && !f.error);
+            const toConvert = fileEntries.filter(f => f.original !== f.converted && !f.done);
             if (toConvert.length === 0) {
                 alert('변환이 필요한 파일이 없습니다.');
                 return;
             }
 
+            // 에러 상태 파일도 재시도 포함
+            toConvert.forEach(f => f.error = null);
+
             showProgress(true);
-            let success = 0, fail = 0;
+            let success = 0, fail = 0, warnings = 0;
 
             for (let i = 0; i < toConvert.length; i++) {
                 const entry = toConvert[i];
@@ -630,8 +713,9 @@
                     await renameEntry(entry);
                     entry.done = true;
                     success++;
+                    if (entry.warning) warnings++;
                 } catch (e) {
-                    entry.error = e.message;
+                    entry.error = friendlyError(e);
                     fail++;
                 }
                 updateProgress((i + 1) / toConvert.length * 100);
@@ -641,6 +725,7 @@
             renderFiles();
 
             let msg = success + '개 파일명 변환 완료';
+            if (warnings > 0) msg += ' (' + warnings + '개 경고)';
             if (fail > 0) msg += ', ' + fail + '개 오류';
             alert(msg);
         }
@@ -671,7 +756,7 @@
         }
 
         async function convertAllDownload() {
-            const toConvert = fileEntries.filter(f => f.original !== f.converted && !f.done);
+            const toConvert = fileEntries.filter(f => f.original !== f.converted && !f.done && !f.error);
             if (toConvert.length === 0) {
                 alert('변환이 필요한 파일이 없습니다.');
                 return;
@@ -747,6 +832,18 @@
             const changed = entry.original !== entry.converted;
             document.getElementById('modalConvertedRow').style.display = changed ? 'flex' : 'none';
             document.getElementById('modalConverted').textContent = entry.converted;
+
+            const errMsg = entry.error || entry.warning || '';
+            const errRow = document.getElementById('modalErrorRow');
+            const errEl = document.getElementById('modalError');
+            if (errMsg) {
+                errRow.style.display = 'flex';
+                errEl.textContent = errMsg;
+                errEl.style.color = entry.error ? '#ff3b30' : '#ff9500';
+            } else {
+                errRow.style.display = 'none';
+            }
+
             document.getElementById('pathModal').classList.add('show');
         }
 
@@ -779,21 +876,46 @@
             fileListEl.style.display = 'block';
             actionsEl.style.display = 'flex';
 
+            detectConvertedCollisions();
+
             container.innerHTML = fileEntries.map((f, idx) => {
                 const changed = f.original !== f.converted;
-                const statusClass = f.done ? 'status-done'
-                    : f.error ? 'status-error'
-                    : changed ? 'status-needed' : 'status-same';
-                const statusText = f.done ? '완료 ✓'
-                    : f.error ? '오류'
-                    : changed ? '변환 필요' : '변환 불필요';
+
+                let statusClass, statusText;
+                if (f.done && f.warning) {
+                    statusClass = 'status-warn';
+                    statusText = '경고';
+                } else if (f.done) {
+                    statusClass = 'status-done';
+                    statusText = '완료 ✓';
+                } else if (f.error) {
+                    statusClass = 'status-error';
+                    statusText = '오류';
+                } else if (f.hasCollision && changed) {
+                    statusClass = 'status-collision';
+                    statusText = '충돌 주의';
+                } else if (changed) {
+                    statusClass = 'status-needed';
+                    statusText = '변환 필요';
+                } else {
+                    statusClass = 'status-same';
+                    statusText = '변환 불필요';
+                }
+
+                // 에러/경고 시 툴팁
+                const statusTitle = f.error ? escapeHtml(f.error)
+                    : f.warning ? escapeHtml(f.warning)
+                    : f.hasCollision && changed ? '같은 폴더에 동일한 변환 결과가 있습니다. 변환 시 자동으로 번호가 붙습니다.'
+                    : '';
 
                 let actionHtml;
-                if (f.done || !changed) {
-                    actionHtml = '<button class="btn-secondary btn-item" disabled>' +
-                        (f.done ? '완료' : '-') + '</button>';
+                if (f.done && !f.warning) {
+                    actionHtml = '<button class="btn-secondary btn-item" disabled>완료</button>';
+                } else if (!changed) {
+                    actionHtml = '<button class="btn-secondary btn-item" disabled>-</button>';
                 } else if (f.error) {
-                    actionHtml = '<button class="btn-secondary btn-item" disabled>오류</button>';
+                    // 오류 시 재시도 버튼
+                    actionHtml = '<button class="btn-primary btn-item" onclick="convertOne(' + idx + ')">재시도</button>';
                 } else {
                     const label = currentMode === 'direct' ? '변환' : '다운로드';
                     actionHtml = '<button class="btn-primary btn-item" onclick="convertOne(' + idx + ')">' + label + '</button>';
@@ -807,7 +929,7 @@
                     '<div class="name ' + (changed ? 'converted' : 'no-change') + '">' +
                         '<span class="name-text" title="' + escapeHtml(f.converted) + '">' + escapeHtml(f.converted) + '</span>' +
                     '</div>' +
-                    '<div class="' + statusClass + '">' + statusText + '</div>' +
+                    '<div class="' + statusClass + '"' + (statusTitle ? ' title="' + statusTitle + '" style="cursor:help"' : '') + '>' + statusText + '</div>' +
                     '<div>' + actionHtml + '</div>' +
                     '</div>';
             }).join('');
