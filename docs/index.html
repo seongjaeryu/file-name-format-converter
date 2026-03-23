@@ -215,9 +215,7 @@
         .progress-bar {
             display: none;
             background: #e8e8ed;
-            border-radius: 8px;
-            height: 8px;
-            margin-bottom: 24px;
+            height: 4px;
             overflow: hidden;
         }
         .progress-bar .fill {
@@ -225,7 +223,6 @@
             height: 100%;
             width: 0%;
             transition: width 0.3s;
-            border-radius: 8px;
         }
 
         /* 경로 모달 */
@@ -339,10 +336,6 @@
         </div>
         <input type="file" id="fileInput" multiple hidden>
 
-        <div class="progress-bar" id="progressBar">
-            <div class="fill" id="progressFill"></div>
-        </div>
-
         <div class="file-list" id="fileList" style="display: none;">
             <div class="file-list-card-header">
                 <div class="card-title">
@@ -353,6 +346,9 @@
                     <button class="btn-secondary" onclick="clearAll()">목록 초기화</button>
                     <button class="btn-primary" id="convertBtn" onclick="convertAll()">전체 변환</button>
                 </div>
+            </div>
+            <div class="progress-bar" id="progressBar">
+                <div class="fill" id="progressFill"></div>
             </div>
             <div class="file-list-col-header">
                 <div>원래 파일명</div>
