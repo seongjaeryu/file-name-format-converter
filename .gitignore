@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
+.claude/
 venv/
 .venv/
 dist/
