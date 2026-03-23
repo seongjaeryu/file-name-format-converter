@@ -740,50 +740,28 @@
 
         // === Direct 모드: 단일 파일 변환 (macOS/APFS) ===
         // APFS는 NFD/NFC를 같은 파일명으로 취급하므로
-        // 임시 파일 경유: 원본 → 임시 복사 → 원본 삭제 → 최종 이름으로 복사 → 임시 삭제
+        // 임시 이름 경유 move 2회: 원본 → 임시이름 → 최종NFC이름
         async function renameEntryMac(entry) {
             if (entry.dirHandle) {
-                let file;
-                try {
-                    file = await entry.fileHandle.getFile();
-                } catch (e) {
-                    throw new Error('파일을 찾을 수 없습니다 (외부에서 삭제/이동됨)');
+                if (!entry.fileHandle.move) {
+                    throw new Error('파일 이름 변경 미지원 브라우저입니다. Chrome 110+ 필요.');
                 }
 
-                const tempName = '.__converting_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+                const suffix = '_converting-' + Math.random().toString(36).slice(2, 4);
+                const tempName = entry.original + suffix;
 
-                // 1단계: 원본 → 임시 파일로 복사
+                // 1단계: 원본 → 임시 이름으로 rename
                 try {
-                    const tempHandle = await entry.dirHandle.getFileHandle(tempName, { create: true });
-                    const tempWritable = await tempHandle.createWritable();
-                    await copyFileContent(file, tempWritable);
+                    await entry.fileHandle.move(entry.dirHandle, tempName);
                 } catch (e) {
-                    try { await entry.dirHandle.removeEntry(tempName); } catch {}
-                    throw e;
+                    throw new Error('임시 이름 변경 실패: ' + e.message);
                 }
 
-                // 2단계: 원본 삭제
+                // 2단계: 임시 이름 → 최종 NFC 이름으로 rename
                 try {
-                    await entry.dirHandle.removeEntry(entry.original);
+                    await entry.fileHandle.move(entry.dirHandle, entry.converted);
                 } catch (e) {
-                    try { await entry.dirHandle.removeEntry(tempName); } catch {}
-                    throw new Error('원본 파일 삭제 실패: ' + e.message);
-                }
-
-                // 3단계: 임시 파일 → 최종 NFC 이름으로 이동 (move 우선, 불가 시 복사)
-                try {
-                    const tempHandle = await entry.dirHandle.getFileHandle(tempName);
-                    if (tempHandle.move) {
-                        await tempHandle.move(entry.dirHandle, entry.converted);
-                    } else {
-                        const tempFile = await tempHandle.getFile();
-                        const finalHandle = await entry.dirHandle.getFileHandle(entry.converted, { create: true });
-                        const finalWritable = await finalHandle.createWritable();
-                        await copyFileContent(tempFile, finalWritable);
-                        await entry.dirHandle.removeEntry(tempName);
-                    }
-                } catch (e) {
-                    entry.warning = '임시 파일(' + tempName + ')에 데이터가 보존되어 있습니다.';
+                    entry.warning = '파일이 임시 이름(' + tempName + ')으로 남아있습니다.';
                     throw e;
                 }
             } else {
