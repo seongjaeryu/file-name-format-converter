@@ -694,41 +694,56 @@
             const file = await entry.fileHandle.getFile();
             const suffix = '~' + Math.random().toString(36).slice(2, 4) + '~nfc';
             const tempName = entry.original + suffix;
+            console.log('[copy] 임시 파일명:', tempName);
 
             // 1단계: 원본 → 임시 파일로 복사
             try {
+                console.log('[copy] 1단계: 임시 파일 생성 + 복사');
                 const tempHandle = await entry.dirHandle.getFileHandle(tempName, { create: true });
+                console.log('[copy] 1단계: getFileHandle 성공');
                 const tempWritable = await tempHandle.createWritable();
+                console.log('[copy] 1단계: createWritable 성공');
                 await copyFileContent(file, tempWritable);
+                console.log('[copy] 1단계 완료');
             } catch (e) {
+                console.error('[copy] 1단계 실패:', e);
                 try { await entry.dirHandle.removeEntry(tempName); } catch {}
                 throw e;
             }
 
             // 2단계: 원본 삭제
             try {
+                console.log('[copy] 2단계: 원본 삭제');
                 await entry.dirHandle.removeEntry(entry.original);
+                console.log('[copy] 2단계 완료');
             } catch (e) {
+                console.error('[copy] 2단계 실패:', e);
                 try { await entry.dirHandle.removeEntry(tempName); } catch {}
                 throw new Error('원본 파일 삭제 실패: ' + e.message);
             }
 
             // 3단계: 임시 → 최종 NFC 이름으로 복사
             try {
+                console.log('[copy] 3단계: 최종 이름으로 복사');
                 const tempHandle = await entry.dirHandle.getFileHandle(tempName);
                 const tempFile = await tempHandle.getFile();
                 const finalHandle = await entry.dirHandle.getFileHandle(entry.converted, { create: true });
                 const finalWritable = await finalHandle.createWritable();
                 await copyFileContent(tempFile, finalWritable);
+                console.log('[copy] 3단계 완료');
             } catch (e) {
+                console.error('[copy] 3단계 실패:', e);
                 entry.warning = '파일이 임시 이름(' + tempName + ')으로 남아 있습니다. *~nfc 로 검색하세요.';
                 throw e;
             }
 
             // 4단계: 임시 파일 삭제
             try {
+                console.log('[copy] 4단계: 임시 파일 삭제');
                 await entry.dirHandle.removeEntry(tempName);
+                console.log('[copy] 4단계 완료');
             } catch (e) {
+                console.error('[copy] 4단계 실패:', e);
                 entry.warning = '변환 완료. 임시 파일(' + tempName + ') 수동 삭제 필요.';
             }
         }
@@ -736,6 +751,9 @@
         // === Direct 모드: 단일 파일 변환 ===
         // move() 우선 시도, 실패 시 복사+삭제 폴백.
         async function renameEntry(entry) {
+            console.log('[renameEntry] 시작:', entry.original, '→', entry.converted);
+            console.log('[renameEntry] dirHandle:', !!entry.dirHandle, 'move:', !!entry.fileHandle.move);
+
             const targetHandle = entry.dirHandle || entry.fileHandle;
             if (!await ensureWritePermission(targetHandle)) {
                 throw new Error('쓰기 권한이 거부되었습니다');
@@ -747,22 +765,29 @@
                     const suffix = '~' + Math.random().toString(36).slice(2, 4) + '~nfc';
                     const tempName = entry.original + suffix;
                     try {
+                        console.log('[move] 1단계 시도:', entry.original, '→', tempName);
                         await entry.fileHandle.move(entry.dirHandle, tempName);
+                        console.log('[move] 1단계 성공');
                         try {
+                            console.log('[move] 2단계 시도:', tempName, '→', entry.converted);
                             await entry.fileHandle.move(entry.dirHandle, entry.converted);
+                            console.log('[move] 2단계 성공');
                             return; // 성공
                         } catch (e) {
+                            console.error('[move] 2단계 실패:', e);
                             entry.warning = '파일이 임시 이름(' + tempName + ')으로 남아 있습니다. *~nfc 로 검색하세요.';
                             throw e;
                         }
                     } catch (moveErr) {
                         if (entry.warning) throw moveErr; // 2단계 실패는 그대로 throw
-                        // 1단계 move 실패 → 복사+삭제 폴백
+                        console.warn('[move] 1단계 실패, 복사+삭제 폴백:', moveErr.message);
                     }
                 }
 
                 // move 미지원 또는 move 실패 → 복사+삭제 방식
+                console.log('[copy] 복사+삭제 방식 시작');
                 await renameViaCopy(entry);
+                console.log('[copy] 복사+삭제 방식 완료');
             } else {
                 if (entry.fileHandle.move) {
                     try {
