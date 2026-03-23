@@ -7,7 +7,7 @@
 
 **설치가 필요 없습니다.** 아래 링크를 Chrome 또는 Edge로 열면 바로 사용할 수 있습니다.
 
-**[바로 사용하기](https://seongjaeryu.github.io/file-name-format-converter/)**
+<a href="https://seongjaeryu.github.io/file-name-format-converter/" target="_blank"><strong>바로 사용하기 👉 seongjaeryu.github.io/file-name-format-converter</strong></a>
 
 ## 이럴 때 사용하세요
 
