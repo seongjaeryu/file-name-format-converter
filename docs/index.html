@@ -770,30 +770,24 @@
                     throw new Error('원본 파일 삭제 실패: ' + e.message);
                 }
 
-                // 3단계: 임시 파일 → 최종 NFC 이름으로 복사
+                // 3단계: 임시 파일 → 최종 NFC 이름으로 이동 (move 우선, 불가 시 복사)
                 try {
                     const tempHandle = await entry.dirHandle.getFileHandle(tempName);
-                    const tempFile = await tempHandle.getFile();
-                    const finalHandle = await entry.dirHandle.getFileHandle(entry.converted, { create: true });
-                    const finalWritable = await finalHandle.createWritable();
-                    await copyFileContent(tempFile, finalWritable);
+                    if (tempHandle.move) {
+                        await tempHandle.move(entry.dirHandle, entry.converted);
+                    } else {
+                        const tempFile = await tempHandle.getFile();
+                        const finalHandle = await entry.dirHandle.getFileHandle(entry.converted, { create: true });
+                        const finalWritable = await finalHandle.createWritable();
+                        await copyFileContent(tempFile, finalWritable);
+                        await entry.dirHandle.removeEntry(tempName);
+                    }
                 } catch (e) {
-                    entry.warning = '변환 중 오류. 임시 파일(' + tempName + ')에 데이터가 보존되어 있습니다.';
+                    entry.warning = '임시 파일(' + tempName + ')에 데이터가 보존되어 있습니다.';
                     throw e;
                 }
-
-                // 4단계: 임시 파일 삭제
-                try {
-                    await entry.dirHandle.removeEntry(tempName);
-                } catch (e) {
-                    entry.warning = '변환 완료. 임시 파일(' + tempName + ') 수동 삭제 필요.';
-                }
             } else {
-                if (entry.fileHandle.move) {
-                    await entry.fileHandle.move(entry.converted);
-                } else {
-                    throw new Error('개별 파일 변환은 Chrome 110+ 필요. 폴더째로 드롭해주세요.');
-                }
+                throw new Error('macOS에서는 폴더째로 드롭해야 변환할 수 있습니다.');
             }
         }
 
@@ -1060,8 +1054,11 @@
                 let reasonHtml = '';
                 if (f.error) {
                     reasonHtml = '<div class="error-reason">↳ ' + escapeHtml(f.error) + '</div>';
+                    if (f.warning) {
+                        reasonHtml += '<div class="warn-reason">↳ ' + escapeHtml(f.warning) + '</div>';
+                    }
                 } else if (f.done && f.warning) {
-                    reasonHtml = '<div class="warn-reason">↳ ' + escapeHtml(f.warning) + '</div>';
+                    reasonHtml += '<div class="warn-reason">↳ ' + escapeHtml(f.warning) + '</div>';
                 }
 
                 return '<div class="file-item">' +
