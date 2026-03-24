@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://seongjaeryu.github.io/file-name-format-converter/sitemap.xml
